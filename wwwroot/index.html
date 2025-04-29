@@ -4,20 +4,13 @@
     <meta charset="UTF-8" />
     <title>Collaboard</title>
 
-    <!-- 1) PeerJS for WebRTC peer-to-peer connections -->
+    <!-- External libraries -->
     <script src="https://unpkg.com/peerjs@1.3.2/dist/peerjs.min.js"></script>
-
-    <!-- 2) Microsoft SignalR client for hub communication -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.2/signalr.min.js"></script>
-
-    <!-- 3) Font Awesome for icons -->
-    <link rel="stylesheet"
-          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-
-    <!-- 4) Whiteboard API library -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <script src="https://www.whiteboard.team/dist/api.js"></script>
 
-    <!-- 5) Styles -->
+    <!-- Styles -->
     <link rel="stylesheet" href="videostyle.css" />
 </head>
 <body>
@@ -58,14 +51,10 @@
     <div id="dropdownPanel" class="dropdown-panel">
         <div id="panelResizeHandle" class="panel-resize-handle"></div>
         <div class="tabs">
-            <button id="chatTab"
-                    class="tab-btn active"
-                    onclick="showPanel('chat')">
+            <button id="chatTab" class="tab-btn active" onclick="showPanel('chat')">
                 Chat
             </button>
-            <button id="whiteboardTab"
-                    class="tab-btn"
-                    onclick="showPanel('whiteboard')">
+            <button id="whiteboardTab" class="tab-btn" onclick="showPanel('whiteboard')">
                 Whiteboard
             </button>
         </div>
@@ -76,9 +65,7 @@
             <div class="chat-container">
                 <div id="chatBox" class="chat-box"></div>
                 <div class="chat-input">
-                    <input type="text"
-                           id="chatInput"
-                           placeholder="Type a message..." />
+                    <input type="text" id="chatInput" placeholder="Type a message..." />
                     <button onclick="sendChat()">Send</button>
                 </div>
             </div>
@@ -113,326 +100,13 @@
         </button>
     </div>
 
-    <script>
-        // --- 1) Room & Username logic ---
-        const urlParams = new URLSearchParams(window.location.search);
-        const roomName = urlParams.get("room") || "TestRoom";
-        document.getElementById("roomNameDisplay").innerText = roomName;
-
-        let username = "Guest";
-        let usernameSet = false;
-        let localVideoAdded = false;
-        let localStream;
-        let peerIdAvailable;
-
-        // Allow Enter key to submit username
-        const usernameInput = document.getElementById("usernameInput");
-        usernameInput.addEventListener("keypress", (e) => {
-            if (e.key === "Enter") {
-                document.getElementById("usernameSubmit").click();
-            }
-        });
-
-        // Handle username submission
-        document
-            .getElementById("usernameSubmit")
-            .addEventListener("click", () => {
-                const val = usernameInput.value.trim();
-                if (val) username = val;
-                usernameSet = true;
-                document.getElementById("usernameModal").style.display = "none";
-
-                // If PeerJS ID is already available, join room immediately
-                if (peerIdAvailable && !localVideoAdded) {
-                    addLocalVideo(username);
-                    connection
-                        .invoke("JoinRoom", roomName, peerIdAvailable)
-                        .catch((err) => console.error(err));
-                }
-            });
-
-        // --- 2) PeerJS setup for WebRTC ---
-        const peer = new Peer();
-        const mediaPromise = navigator.mediaDevices
-            .getUserMedia({ video: { width: 1280, height: 720 }, audio: true })
-            .then((stream) => {
-                localStream = stream;
-                updateStatusIndicator();
-            });
-
-        // Wait for PeerJS server to assign an ID
-        const peerPromise = new Promise((resolve) => {
-            peer.on("open", (id) => {
-                peerIdAvailable = id;
-                console.log("Peer ID:", id);
-                resolve(id);
-            });
-        });
-
-        // --- 3) SignalR connection ---
-        const connection = new signalR.HubConnectionBuilder()
-            .withUrl("/chatHub")
-            .withAutomaticReconnect()
-            .build();
-
-        const signalRPromise = connection
-            .start()
-            .then(() => console.log("Connected to SignalR hub."))
-            .catch((err) => console.error(err));
-
-        // --- 4) Once media, peer, and SignalR are ready, join the room ---
-        Promise.all([mediaPromise, peerPromise, signalRPromise])
-            .then(([, id]) => {
-                if (usernameSet && !localVideoAdded) {
-                    addLocalVideo(username);
-                    return connection.invoke("JoinRoom", roomName, id);
-                }
-            })
-            .catch((err) => console.error("Startup error:", err));
-
-        // --- 5) Handle incoming PeerJS calls ---
-        peer.on("call", (call) => {
-            call.answer(localStream);
-            call.on("stream", (s) =>
-                addRemoteVideo(call.peer, s, "User " + call.peer.slice(0, 5))
-            );
-            call.on("close", () => removeVideoContainer(call.peer));
-            call.on("error", (e) => console.error("Peer call error:", e));
-        });
-
-        // Initiate a call to a newly connected peer
-        function callPeer(remoteId) {
-            if (remoteId === peerIdAvailable) return;
-            const c = peer.call(remoteId, localStream);
-            c.on("stream", (s) =>
-                addRemoteVideo(remoteId, s, "User " + remoteId.slice(0, 5))
-            );
-            c.on("close", () => removeVideoContainer(remoteId));
-            c.on("error", (e) => console.error("Call error:", e));
-        }
-
-        // --- 6) SignalR event handlers ---
-        connection.on("ExistingPeers", (ids) => ids.forEach(callPeer));
-        connection.on("UserConnected", (id) => callPeer(id));
-        connection.on("UserDisconnected", (id) => removeVideoContainer(id));
-        connection.on("broadcastMessage", appendChatMessage);
-
-        // --- Helper functions for video grid, chat, UI, etc. ---
-        const videoGrid = document.getElementById("videoGrid");
-
-        function updateStatusIndicator() {
-            if (!localStream) return;
-            const mic = localStream.getAudioTracks()[0].enabled
-                ? "On"
-                : "Muted";
-            const cam = localStream.getVideoTracks()[0].enabled
-                ? "On"
-                : "Off";
-            document.getElementById("statusIndicator").innerText = `Mic: ${mic} | Camera: ${cam}`;
-        }
-
-        function addLocalVideo(name) {
-            if (localVideoAdded) return;
-            localVideoAdded = true;
-            const container = document.createElement("div");
-            container.className = "video-container";
-            container.id = "container-" + peerIdAvailable;
-
-            const vid = document.createElement("video");
-            vid.autoplay = true;
-            vid.muted = true;
-            vid.playsInline = true;
-            vid.srcObject = localStream;
-
-            const label = document.createElement("div");
-            label.className = "video-label";
-            label.innerText = name;
-
-            container.append(vid, label);
-            videoGrid.appendChild(container);
-            updateVideoGridLayout();
-        }
-
-        function addRemoteVideo(id, stream, name) {
-            if (document.getElementById("container-" + id)) return;
-            const container = document.createElement("div");
-            container.className = "video-container";
-            container.id = "container-" + id;
-
-            const vid = document.createElement("video");
-            vid.autoplay = true;
-            vid.playsInline = true;
-            vid.srcObject = stream;
-
-            const label = document.createElement("div");
-            label.className = "video-label";
-            label.innerText = name;
-
-            container.append(vid, label);
-            videoGrid.appendChild(container);
-            updateVideoGridLayout();
-        }
-
-        function removeVideoContainer(id) {
-            const c = document.getElementById("container-" + id);
-            if (c) {
-                c.remove();
-                updateVideoGridLayout();
-            }
-        }
-
-        function updateVideoGridLayout() {
-            const count = videoGrid.childElementCount;
-            videoGrid.style.gridTemplateColumns =
-                count <= 1
-                    ? "1fr"
-                    : count === 2
-                        ? "1fr 1fr"
-                        : count <= 4
-                            ? "1fr 1fr"
-                            : "repeat(auto-fit, minmax(300px,1fr))";
-        }
-
-        function appendChatMessage(name, message) {
-            const p = document.createElement("p");
-            p.innerText = `${name}: ${message}`;
-            const box = document.getElementById("chatBox");
-            box.appendChild(p);
-            box.scrollTop = box.scrollHeight;
-        }
-
-        function sendChat() {
-            const txt = document.getElementById("chatInput");
-            if (txt.value.trim()) {
-                connection
-                    .invoke("BroadcastMessage", roomName, username, txt.value)
-                    .catch((err) => console.error(err));
-                appendChatMessage(username, txt.value);
-                txt.value = "";
-            }
-        }
-
-        document
-            .getElementById("chatInput")
-            .addEventListener("keypress", (e) => {
-                if (e.key === "Enter") {
-                    sendChat();
-                    e.preventDefault();
-                }
-            });
-
-        // --- UI Controls ---
-        function toggleDropdownPanel() {
-            document.getElementById("dropdownPanel").classList.toggle("open");
-        }
-
-        function showPanel(panel) {
-            ["chat", "whiteboard"].forEach((p) => {
-                document.getElementById(p + "Panel").classList.remove("active");
-                document.getElementById(p + "Tab").classList.remove("active");
-            });
-            document.getElementById(panel + "Panel").classList.add("active");
-            document.getElementById(panel + "Tab").classList.add("active");
-            if (panel === "whiteboard" && !wtInitialized) initializeWhiteboard();
-        }
-
-        // --- Whiteboard initialization ---
-        let wtInitialized = false;
-        function initializeWhiteboard() {
-            new api.WhiteboardTeam("#wt-container", {
-                clientId: "826eece0e58a661b21e57fdde1c4b032",
-                boardCode: "22b58b6b-147c-48d4-8c84-6209d3816837"
-            });
-            wtInitialized = true;
-        }
-
-        // --- Media controls ---
-        function toggleMute() {
-            localStream.getAudioTracks().forEach((t) => (t.enabled = !t.enabled));
-            updateStatusIndicator();
-        }
-
-        function toggleCamera() {
-            localStream.getVideoTracks().forEach((t) => (t.enabled = !t.enabled));
-            updateStatusIndicator();
-        }
-
-        async function startScreenShare() {
-            try {
-                const screen = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                const container = document.getElementById("container-" + peerIdAvailable);
-                if (container) {
-                    const videoEl = container.querySelector("video");
-                    videoEl.srcObject = screen;
-                    screen.getVideoTracks()[0].addEventListener("ended", () => {
-                        videoEl.srcObject = localStream;
-                    });
-                }
-            } catch (err) {
-                console.error("Screen share error:", err);
-            }
-        }
-
-        // --- Recording controls ---
-        let mediaRecorder, recordedChunks = [], recording = false;
-        function toggleRecording() {
-            if (!recording) {
-                mediaRecorder = new MediaRecorder(localStream);
-                mediaRecorder.ondataavailable = (e) =>
-                    e.data.size && recordedChunks.push(e.data);
-                mediaRecorder.onstop = () => {
-                    const blob = new Blob(recordedChunks, { type: "video/webm" });
-                    window.open(URL.createObjectURL(blob));
-                    recordedChunks = [];
-                };
-                mediaRecorder.start();
-                recording = true;
-                document.getElementById("recordBtnLabel").innerText = "Stop";
-            } else {
-                mediaRecorder.stop();
-                recording = false;
-                document.getElementById("recordBtnLabel").innerText = "Record";
-            }
-        }
-
-        function toggleVirtualBackground() {
-            const c = document.getElementById("container-" + peerIdAvailable);
-            if (c) c.querySelector("video").classList.toggle("virtual-bg");
-        }
-
-        function raiseHand() {
-            const div = document.createElement("div");
-            div.className = "hand-indicator";
-            div.innerText = "Hand Raised";
-            document.querySelector(".video-area").appendChild(div);
-            setTimeout(() => div.remove(), 5000);
-        }
-
-        // --- Panel resize logic ---
-        const resizeHandle = document.getElementById("panelResizeHandle");
-        const dropdownPanel = document.getElementById("dropdownPanel");
-        let isResizing = false, startX, startW;
-
-        resizeHandle.addEventListener("mousedown", (e) => {
-            isResizing = true;
-            startX = e.clientX;
-            startW = dropdownPanel.offsetWidth;
-            document.body.style.cursor = "ew-resize";
-            e.preventDefault();
-        });
-
-        document.addEventListener("mousemove", (e) => {
-            if (!isResizing) return;
-            const dx = startX - e.clientX;
-            dropdownPanel.style.width = Math.max(startW + dx, 300) + "px";
-        });
-
-        document.addEventListener("mouseup", () => {
-            if (isResizing) {
-                isResizing = false;
-                document.body.style.cursor = "default";
-            }
-        });
-    </script>
+    <!-- JavaScript modules -->
+    <script src="js/app.js"></script>
+    <script src="js/peer-connection.js"></script>
+    <script src="js/signalr-connection.js"></script>
+    <script src="js/video-controls.js"></script>
+    <script src="js/ui-controls.js"></script>
+    <script src="js/whiteboard.js"></script>
+    <script src="js/chat.js"></script>
 </body>
 </html>

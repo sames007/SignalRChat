@@ -13,13 +13,12 @@ namespace SignalRChat.Hubs
         // Maps each SignalR connection ID to the room it joined
         private static readonly Dictionary<string, string> ConnectionRoomMap = new();
 
-        // Sync root for thread‑safe dictionary updates
+        // Maps peer ID to username
+        private static readonly Dictionary<string, string> PeerUsernameMap = new();
+
+        // Sync root for thread-safe dictionary updates
         private static readonly object _lock = new();
 
-        /// <summary>
-        /// Called automatically when a client disconnects.
-        /// Cleans up mappings and notifies others in the same room.
-        /// </summary>
         public override async Task OnDisconnectedAsync(Exception exception)
         {
             string peerId = null, room = null;
@@ -32,12 +31,12 @@ namespace SignalRChat.Hubs
                     Rooms[room].Remove(peerId);
                     ConnectionPeerMap.Remove(Context.ConnectionId);
                     ConnectionRoomMap.Remove(Context.ConnectionId);
+                    PeerUsernameMap.Remove(peerId);
                 }
             }
 
             if (!string.IsNullOrEmpty(peerId) && !string.IsNullOrEmpty(room))
             {
-                // Remove from SignalR group and broadcast disconnect event
                 await Groups.RemoveFromGroupAsync(Context.ConnectionId, room);
                 await Clients.Group(room).SendAsync("UserDisconnected", peerId);
             }
@@ -46,43 +45,53 @@ namespace SignalRChat.Hubs
         }
 
         /// <summary>
-        /// Client invokes this to join a room and share its PeerJS ID.
-        /// Returns the list of existing peers and notifies others.
+        /// Client calls this to join, passing room, their PeerJS ID, and chosen username.
+        /// Server returns existing peers + usernames and notifies others with name.
         /// </summary>
-        public async Task JoinRoom(string room, string peerId)
+        public async Task JoinRoom(string room, string peerId, string username)
         {
             List<string> existingPeers;
-
             lock (_lock)
             {
                 if (!Rooms.ContainsKey(room))
-                {
                     Rooms[room] = new HashSet<string>();
-                }
 
-                existingPeers = new List<string>(Rooms[room]);
+                existingPeers = Rooms[room].ToList();
                 Rooms[room].Add(peerId);
                 ConnectionPeerMap[Context.ConnectionId] = peerId;
                 ConnectionRoomMap[Context.ConnectionId] = room;
+                PeerUsernameMap[peerId] = username;
             }
 
-            // Add this client to the SignalR group for broadcasting
             await Groups.AddToGroupAsync(Context.ConnectionId, room);
 
-            // Send existing peer list to the caller
-            await Clients.Caller.SendAsync("ExistingPeers", existingPeers);
+            // send existing peers + names back to caller
+            var existingInfo = existingPeers
+                .Select(id => new { PeerId = id, Username = PeerUsernameMap[id] })
+                .ToList();
+            await Clients.Caller.SendAsync("ExistingPeers", existingInfo);
 
-            // Inform other clients in the room about the new peer
-            await Clients.OthersInGroup(room).SendAsync("UserConnected", peerId);
+            // tell everyone else who joined
+            await Clients.OthersInGroup(room)
+                         .SendAsync("UserConnected", peerId, username);
         }
 
         /// <summary>
         /// Broadcasts a chat message to all clients in the specified room.
         /// </summary>
         public Task BroadcastMessage(string room, string name, string message)
-        {
-            return Clients.Group(room).SendAsync("broadcastMessage", name, message);
-        }
+            => Clients.Group(room).SendAsync("broadcastMessage", name, message);
+
+        /// <summary>
+        /// Notifies everyone to toggle the background on a given peer’s video.
+        /// </summary>
+        public Task ToggleVirtualBackground(string room, string peerId)
+            => Clients.Group(room).SendAsync("VirtualBackgroundToggled", peerId);
+
+        /// <summary>
+        /// Notifies everyone that a user raised their hand.
+        /// </summary>
+        public Task RaiseHand(string room, string peerId)
+            => Clients.Group(room).SendAsync("UserRaisedHand", peerId);
     }
 }
-
