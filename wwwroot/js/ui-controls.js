@@ -1,49 +1,69 @@
-﻿// Toggle the side panel (chat/whiteboard)
+﻿// === ui-controls.js ===
+// Handles the slide‑out panel behavior and tab switching logic.
+
+// Get references to the dropdown panel and resize handle elements
+const dropdownPanel = document.getElementById("dropdownPanel");
+const resizeHandle = document.getElementById("panelResizeHandle");
+
+// Variables for tracking panel resizing
+let isResizing = false, startX, startW;
+
+/**
+ * Toggles the visibility of the dropdown panel by
+ * adding/removing the 'open' CSS class.
+ */
 function toggleDropdownPanel() {
-    document.getElementById("dropdownPanel").classList.toggle("open");
+    dropdownPanel.classList.toggle("open");
 }
 
-// Switch between chat and whiteboard panels
+/**
+ * Switches between the 'chat' and 'whiteboard' panels.
+ * Highlights the selected tab and shows the corresponding panel.
+ * Initializes whiteboard on first open.
+ * 
+ * @param {string} panel - The panel to activate ('chat' or 'whiteboard')
+ */
 function showPanel(panel) {
-    ["chat", "whiteboard"].forEach((p) => {
+    ["chat", "whiteboard"].forEach(p => {
         document.getElementById(p + "Panel").classList.remove("active");
         document.getElementById(p + "Tab").classList.remove("active");
     });
-
     document.getElementById(panel + "Panel").classList.add("active");
     document.getElementById(panel + "Tab").classList.add("active");
 
-    // Initialize whiteboard if it's the first time showing it
+    // Lazy-load whiteboard setup if needed
     if (panel === "whiteboard" && !wtInitialized) initializeWhiteboard();
 }
 
-// Set up panel resize functionality
-function setupPanelResize() {
-    const resizeHandle = document.getElementById("panelResizeHandle");
-    const dropdownPanel = document.getElementById("dropdownPanel");
-    let isResizing = false, startX, startW;
+// === Resizable Panel Logic ===
 
-    resizeHandle.addEventListener("mousedown", (e) => {
-        isResizing = true;
-        startX = e.clientX;
-        startW = dropdownPanel.offsetWidth;
-        document.body.style.cursor = "ew-resize";
-        e.preventDefault();
-    });
+/**
+ * Begins the resizing interaction when the user presses the mouse
+ * down on the resize handle.
+ */
+resizeHandle.addEventListener("mousedown", e => {
+    isResizing = true;
+    startX = e.clientX; // Store initial mouse X position
+    startW = dropdownPanel.offsetWidth; // Store initial panel width
+    document.body.style.cursor = "ew-resize"; // Change cursor to resize mode
+    e.preventDefault(); // Prevent text selection
+});
 
-    document.addEventListener("mousemove", (e) => {
-        if (!isResizing) return;
-        const dx = startX - e.clientX;
-        dropdownPanel.style.width = Math.max(startW + dx, 300) + "px";
-    });
+/**
+ * Adjusts the panel width dynamically as the user moves the mouse.
+ */
+document.addEventListener("mousemove", e => {
+    if (!isResizing) return;
+    const dx = startX - e.clientX; // Calculate movement delta
+    dropdownPanel.style.width = Math.max(startW + dx, 300) + "px"; // Set new width (min 300px)
+});
 
-    document.addEventListener("mouseup", () => {
-        if (isResizing) {
-            isResizing = false;
-            document.body.style.cursor = "default";
-        }
-    });
-}
-
-// Initialize UI controls when the DOM is loaded
-document.addEventListener('DOMContentLoaded', setupPanelResize);
+/**
+ * Ends the resizing interaction when the mouse is released.
+ */
+document.addEventListener("mouseup", () => {
+    if (isResizing) {
+        isResizing = false;
+        document.body.style.cursor = "default"; // Restore default cursor
+    }
+});

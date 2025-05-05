@@ -1,20 +1,26 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <title>Collaboard</title>
-
-    <!-- External libraries -->
+    <meta charset="UTF-8" /> <!-- Declare document character encoding as UTF-8 -->
+    <title>Collaboard</title> <!-- Page title shown in browser tab -->
+    <!-- 1) PeerJS library for WebRTC peer-to-peer connections -->
     <script src="https://unpkg.com/peerjs@1.3.2/dist/peerjs.min.js"></script>
+
+    <!-- 2) Microsoft SignalR client for real-time hub communication -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.2/signalr.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <!-- 3) Font Awesome for iconography -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <!-- 4) Whiteboard API library for collaborative drawing -->
     <script src="https://www.whiteboard.team/dist/api.js"></script>
 
-    <!-- Styles -->
+    <!-- 5) Custom CSS styles for video grid, panels, toolbar, etc. -->
     <link rel="stylesheet" href="videostyle.css" />
 </head>
 <body>
-    <!-- Username prompt modal -->
+    <!-- Username prompt modal: forces user to pick a name before joining -->
     <div id="usernameModal">
         <div class="modal-content">
             <h2>Welcome to Collaboard!</h2>
@@ -24,62 +30,73 @@
         </div>
     </div>
 
-    <!-- Top header with room code display -->
+    <!-- Top header with app logo, room code display, and menu toggle -->
     <header>
         <div class="top-bar">
-            <img src="final_logo.png" alt="Final Logo" />
+            <img src="final_logo.png" alt="Final Logo" /> <!-- Application logo -->
             <div class="session-code">
-                Room: <span id="roomNameDisplay"></span>
+                Room: <span id="roomNameDisplay"></span> <!-- Populated by JS -->
             </div>
         </div>
+        <!-- Hamburger button to toggle the slide-out side panel -->
         <button class="dropdown-toggle" onclick="toggleDropdownPanel()">
             <i class="fas fa-bars"></i>
         </button>
     </header>
 
-    <!-- Main video grid container -->
+    <!-- Main content container for video streams -->
     <div class="app-container">
         <div class="video-area" id="videoArea">
-            <div id="videoGrid" class="video-grid"></div>
+            <div id="videoGrid" class="video-grid"></div> <!-- Grid for video tiles -->
         </div>
     </div>
 
-    <!-- Real‑time status of mic/camera -->
+    <!-- Real-time status indicator for local mic/camera state -->
     <div id="statusIndicator">Mic: On | Camera: On</div>
 
-    <!-- Slide‑out panel for chat and whiteboard -->
+    <!-- Slide-out panel contains Chat and Whiteboard tabs -->
     <div id="dropdownPanel" class="dropdown-panel">
+        <!-- Resize handle to drag and resize the panel -->
         <div id="panelResizeHandle" class="panel-resize-handle"></div>
+
+        <!-- Tab buttons for switching between Chat and Whiteboard -->
         <div class="tabs">
-            <button id="chatTab" class="tab-btn active" onclick="showPanel('chat')">
+            <button id="chatTab"
+                    class="tab-btn active"
+                    onclick="showPanel('chat')">
                 Chat
             </button>
-            <button id="whiteboardTab" class="tab-btn" onclick="showPanel('whiteboard')">
+            <button id="whiteboardTab"
+                    class="tab-btn"
+                    onclick="showPanel('whiteboard')">
                 Whiteboard
             </button>
         </div>
 
-        <!-- Chat panel -->
+        <!-- Chat panel content -->
         <div id="chatPanel" class="panel-content active">
             <h2>Chat</h2>
             <div class="chat-container">
-                <div id="chatBox" class="chat-box"></div>
+                <div id="chatBox" class="chat-box"></div> <!-- Message display area -->
                 <div class="chat-input">
-                    <input type="text" id="chatInput" placeholder="Type a message..." />
+                    <input type="text"
+                           id="chatInput"
+                           placeholder="Type a message..." />
                     <button onclick="sendChat()">Send</button>
                 </div>
             </div>
         </div>
 
-        <!-- Whiteboard panel -->
+        <!-- Whiteboard panel content -->
         <div id="whiteboardPanel" class="panel-content">
             <div class="whiteboard-container">
-                <div id="wt-container" class="wt-container"></div>
+                <div id="wt-container"
+                     class="wt-container"></div> <!-- Whiteboard canvas element -->
             </div>
         </div>
     </div>
 
-    <!-- Controls for mute/camera/screen share/etc. -->
+    <!-- Bottom toolbar with media and collaboration controls -->
     <div class="bottom-toolbar">
         <button onclick="toggleMute()">
             <i class="fas fa-microphone"></i> Mute/Unmute
@@ -91,16 +108,18 @@
             <i class="fas fa-desktop"></i> Share Screen
         </button>
         <button onclick="toggleVirtualBackground()">
-            <i class="fas fa-image"></i> Virtual&nbsp;BG
+            <i class="fas fa-image"></i> Virtual BG
         </button>
-        <button onclick="raiseHand()">Raise Hand</button>
+        <button type="button" onclick="raiseHand()">
+            <i class="fas fa-hand-paper" aria-hidden="true"></i> Raise Hand
+        </button>
         <button onclick="toggleRecording()">
             <i class="fas fa-video"></i>
-            <span id="recordBtnLabel">Record</span>
+            <span id="recordBtnLabel"> Record</span>
         </button>
     </div>
 
-    <!-- JavaScript modules -->
+    <!-- Load modular JavaScript files at end of body for performance -->
     <script src="js/app.js"></script>
     <script src="js/peer-connection.js"></script>
     <script src="js/signalr-connection.js"></script>

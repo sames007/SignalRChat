@@ -1,113 +1,37 @@
-﻿// Global peer object
-let peer;
+﻿// --- js/peer-connection.js ---
+// Manages initiating and handling peer-to-peer calls using WebRTC (via PeerJS).
 
-// Initialize PeerJS connection
-function initializePeerConnection() {
-    peer = new Peer();
+/**
+ * Initiates a call to a remote peer and sets up event handlers for their stream.
+ *
+ * @param {string} remoteId   - The PeerJS ID of the remote peer to call.
+ * @param {string} remoteName - The username of the remote peer (for UI labels).
+ */
+function callPeer(remoteId, remoteName) {
+    // Don't call yourself if your own peer ID is passed in
+    if (remoteId === peerIdAvailable) return;
 
-    return new Promise((resolve) => {
-        peer.on("open", (id) => {
-            app.peerIdAvailable = id;
-            console.log("Peer ID:", id);
-            resolve(id);
-        });
+    // ---------------------------------------------------------------------------
+    // 1) Keep track of the remote peer's username for UI purposes
+    peerUsernameMap[remoteId] = remoteName;
+
+    // ---------------------------------------------------------------------------
+    // 2) Place the call, sending your local media stream and your username as metadata
+    const c = peer.call(remoteId, localStream, {
+        metadata: { username: username }
     });
-}
 
-// Set up event handlers for incoming peer calls
-function setupPeerEventHandlers() {
-    peer.on("call", (call) => {
-        call.answer(app.localStream);
-        call.on("stream", (s) =>
-            addRemoteVideo(call.peer, s, "User " + call.peer.slice(0, 5))
-        );
-        call.on("close", () => removeVideoContainer(call.peer));
-        call.on("error", (e) => console.error("Peer call error:", e));
+    // ---------------------------------------------------------------------------
+    // 3) When the remote stream is received:
+    //    - Add a video element for this user
+    //    - Label it with the remoteName to identify the speaker
+    c.on("stream", stream => {
+        addRemoteVideo(remoteId, stream, remoteName);
     });
-}
 
-// Initiate a call to a newly connected peer
-function callPeer(remoteId) {
-    if (remoteId === app.peerIdAvailable) return;
-
-    const c = peer.call(remoteId, app.localStream);
-
-    c.on("stream", (s) =>
-        addRemoteVideo(remoteId, s, "User " + remoteId.slice(0, 5))
-    );
+    // Remove the video element when the call ends
     c.on("close", () => removeVideoContainer(remoteId));
-    c.on("error", (e) => console.error("Call error:", e));
+
+    // Log any errors during the call lifecycle
+    c.on("error", e => console.error("Call error:", e));
 }
-
-// Add local video to the grid
-function addLocalVideo(name) {
-    if (app.localVideoAdded) return;
-    app.localVideoAdded = true;
-
-    const container = document.createElement("div");
-    container.className = "video-container";
-    container.id = "container-" + app.peerIdAvailable;
-
-    const vid = document.createElement("video");
-    vid.autoplay = true;
-    vid.muted = true;
-    vid.playsInline = true;
-    vid.srcObject = app.localStream;
-
-    const label = document.createElement("div");
-    label.className = "video-label";
-    label.innerText = name;
-
-    container.append(vid, label);
-    document.getElementById("videoGrid").appendChild(container);
-    updateVideoGridLayout();
-}
-
-// Add remote video to the grid
-function addRemoteVideo(id, stream, name) {
-    if (document.getElementById("container-" + id)) return;
-
-    const container = document.createElement("div");
-    container.className = "video-container";
-    container.id = "container-" + id;
-
-    const vid = document.createElement("video");
-    vid.autoplay = true;
-    vid.playsInline = true;
-    vid.srcObject = stream;
-
-    const label = document.createElement("div");
-    label.className = "video-label";
-    label.innerText = name;
-
-    container.append(vid, label);
-    document.getElementById("videoGrid").appendChild(container);
-    updateVideoGridLayout();
-}
-
-// Remove a video container when peer disconnects
-function removeVideoContainer(id) {
-    const c = document.getElementById("container-" + id);
-    if (c) {
-        c.remove();
-        updateVideoGridLayout();
-    }
-}
-
-// Update the video grid layout based on the number of participants
-function updateVideoGridLayout() {
-    const videoGrid = document.getElementById("videoGrid");
-    const count = videoGrid.childElementCount;
-
-    videoGrid.style.gridTemplateColumns =
-        count <= 1
-            ? "1fr"
-            : count === 2
-                ? "1fr 1fr"
-                : count <= 4
-                    ? "1fr 1fr"
-                    : "repeat(auto-fit, minmax(300px,1fr))";
-}
-
-// Set up peer event handlers when the script loads
-document.addEventListener('DOMContentLoaded', setupPeerEventHandlers);
