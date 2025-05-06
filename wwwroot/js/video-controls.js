@@ -1,39 +1,41 @@
-﻿// === video-controls.js ===
-// Manages the local and remote video grid, recording, screen sharing, and UI status indicators.
+﻿// === video‑controls.js ===
+// Manages local/remote video, recording, screen sharing, and UI updates.
 
-const videoGrid = document.getElementById("videoGrid");  // Container for all video tiles
-let isRecording = false;                                  // Recording state flag
-let mediaRecorder = null;                                 // MediaRecorder instance for recording
-let recordedChunks = [];                                  // Collected recording data chunks
+const videoGrid = document.getElementById("videoGrid");
+let isRecording = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+let localVideoAdded = false;
+let isScreenSharing = false;
+let originalStream = null;
+const mediaConnections = [];  // store every PeerJS MediaConnection
 
 /**
- * Updates the on-screen mic/camera status indicator based on the local stream.
+ * Updates the mic/cam status indicator.
  */
 function updateStatusIndicator() {
-    if (!localStream) return;
-    const mic = localStream.getAudioTracks()[0].enabled ? "On" : "Muted";
-    const cam = localStream.getVideoTracks()[0].enabled ? "On" : "Off";
-    document.getElementById("statusIndicator").innerText =
-        `Mic: ${mic} | Camera: ${cam}`;
+    if (!window.localStream) return;
+    const mic = window.localStream.getAudioTracks()[0]?.enabled ? "On" : "Muted";
+    const cam = window.localStream.getVideoTracks()[0]?.enabled ? "On" : "Off";
+    document.getElementById("statusIndicator").innerText = `Mic: ${mic} | Camera: ${cam}`;
 }
 
 /**
- * Adds the local user's video to the grid (only once).
- * @param {string} name - Display name to show under the video.
+ * Adds the local video (only once).
  */
 function addLocalVideo(name) {
-    if (localVideoAdded) return;
+    if (localVideoAdded || !window.localStream) return;
     localVideoAdded = true;
 
     const container = document.createElement("div");
     container.className = "video-container";
-    container.id = "container-" + peerIdAvailable;
+    container.id = `container-${peerIdAvailable}`;
 
     const video = document.createElement("video");
     video.autoplay = true;
-    video.muted = true;       // Mute self to avoid echo
+    video.muted = true;
     video.playsInline = true;
-    video.srcObject = localStream;
+    video.srcObject = window.localStream;
 
     const label = document.createElement("div");
     label.className = "video-label";
@@ -45,209 +47,24 @@ function addLocalVideo(name) {
 }
 
 /**
- * Toggles the mute state of the local audio track.
- */
-function toggleMute() {
-    if (!window.localStream) return;
-    const audioTracks = window.localStream.getAudioTracks();
-    if (!audioTracks.length) return;
-
-    audioTracks[0].enabled = !audioTracks[0].enabled;
-    updateStatusIndicator();
-}
-
-/**
- * Toggles the enabled state of the local video track.
- */
-function toggleCamera() {
-    const stream = window.localStream;
-    if (!stream) return;
-    const videoTracks = stream.getVideoTracks();
-    if (!videoTracks.length) return;
-
-    videoTracks[0].enabled = !videoTracks[0].enabled;
-    updateStatusIndicator();
-}
-
-/**
- * Requests the server to toggle virtual background for this peer.
- */
-function toggleVirtualBackground() {
-    connection.invoke("ToggleVirtualBackground", roomName, peerIdAvailable)
-        .catch(console.error);
-}
-
-/**
- * Raises the user's hand: visually marks their tile and notifies peers.
- */
-function raiseHand() {
-    console.log("raiseHand() called");
-    if (!connection || !peerIdAvailable) {
-        console.warn("No connection or peerId yet");
-        return;
-    }
-
-    connection.invoke("RaiseHand", roomName, peerIdAvailable)
-        .then(() => {
-            // Highlight own tile immediately
-            const myTile = document.getElementById(`container-${peerIdAvailable}`);
-            if (myTile) {
-                myTile.classList.add('hand-raised');
-                // Remove highlight after 5 seconds
-                setTimeout(() => myTile.classList.remove('hand-raised'), 5000);
-            }
-        })
-        .catch(err => console.error("raiseHand invoke failed:", err));
-}
-
-/**
- * Starts a screen share by replacing video tracks on all peer connections
- * and notifying others.
- */
-async function startScreenShare() {
-    if (!window.localStream || !peer) return;
-
-    try {
-        // 1) Capture display media (screen)
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        const screenTrack = screenStream.getVideoTracks()[0];
-
-        // 2) When user stops screen share in browser UI, call stopScreenShare()
-        screenTrack.onended = () => stopScreenShare();
-
-        // 3) Replace each PeerJS connection's video sender with the screen track
-        Object.values(peer.connections).forEach(connArr =>
-            connArr.forEach(conn => {
-                if (conn.peerConnection) {
-                    const sender = conn.peerConnection.getSenders()
-                        .find(s => s.track && s.track.kind === "video");
-                    if (sender) sender.replaceTrack(screenTrack);
-                }
-            })
-        );
-
-        // 4) Combine screen track with mic track for localStream
-        const micTrack = window.localStream.getAudioTracks()[0];
-        const mixed = new MediaStream([screenTrack, micTrack]);
-        window.localStream = mixed;
-
-        // 5) Update the local video element to show the screen
-        document.querySelector(`#container-${peerIdAvailable} video`)
-            .srcObject = mixed;
-
-        // 6) Notify peers that screen sharing has started
-        connection.invoke("StartScreenShare", roomName, peerIdAvailable)
-            .catch(console.error);
-    } catch (err) {
-        console.error("Screen share failed:", err);
-    }
-}
-
-/**
- * Stops screen sharing and restores the camera video track on all connections.
- */
-async function stopScreenShare() {
-    if (!window.localStream || !peer) return;
-
-    try {
-        // 1) Get a fresh camera-only track
-        const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        const cameraTrack = camStream.getVideoTracks()[0];
-
-        // 2) Replace screen track with camera track on all peer connections
-        Object.values(peer.connections).forEach(connArr =>
-            connArr.forEach(conn => {
-                if (conn.peerConnection) {
-                    const sender = conn.peerConnection.getSenders()
-                        .find(s => s.track && s.track.kind === "video");
-                    if (sender) sender.replaceTrack(cameraTrack);
-                }
-            })
-        );
-
-        // 3) Replace localStream tracks: remove old, add new
-        const oldTracks = window.localStream.getVideoTracks();
-        oldTracks.forEach(t => window.localStream.removeTrack(t));
-        window.localStream.addTrack(cameraTrack);
-
-        // 4) Update the local video element
-        document.querySelector(`#container-${peerIdAvailable} video`)
-            .srcObject = window.localStream;
-
-        // 5) Notify peers that screen sharing has stopped
-        connection.invoke("StopScreenShare", roomName, peerIdAvailable)
-            .catch(console.error);
-    } catch (err) {
-        console.error("Stop share failed:", err);
-    }
-}
-
-/**
- * Starts or stops recording of the localStream.
- * When stopped, creates and downloads a .webm recording file.
- */
-function toggleRecording() {
-    if (!window.localStream) return;
-
-    if (!isRecording) {
-        // --- Start recording ---
-        recordedChunks = [];
-        mediaRecorder = new MediaRecorder(window.localStream);
-        mediaRecorder.ondataavailable = e => {
-            if (e.data.size) recordedChunks.push(e.data);
-        };
-        mediaRecorder.onstop = () => {
-            // Create blob, temporary link, and trigger download
-            const blob = new Blob(recordedChunks, { type: "video/webm" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.style.display = "none";
-            a.href = url;
-            a.download = `recording-${Date.now()}.webm`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
-        };
-
-        mediaRecorder.start();
-        isRecording = true;
-        document.getElementById("recordBtnLabel").innerText = "Stop";
-
-        // Notify peers about recording state change
-        connection.invoke("ToggleRecording", roomName, peerIdAvailable)
-            .catch(err => console.error("toggleRecording invoke failed:", err));
-
-    } else {
-        // --- Stop recording ---
-        mediaRecorder.stop();
-        isRecording = false;
-        document.getElementById("recordBtnLabel").innerText = "Record";
-
-        // Notify peers about recording state change
-        connection.invoke("ToggleRecording", roomName, peerIdAvailable)
-            .catch(err => console.error("toggleRecording invoke failed:", err));
-    }
-}
-
-/**
- * Adds a remote peer's video stream to the grid.
- * @param {string} id     - PeerJS ID of the remote user.
- * @param {MediaStream} stream - Remote user's media stream.
- * @param {string} name   - Display name under the video.
+ * Adds a remote peer’s video (no built‑in controls).
  */
 function addRemoteVideo(id, stream, name) {
-    if (document.getElementById("container-" + id)) return;
+    if (document.getElementById(`container-${id}`)) return;
 
     const container = document.createElement("div");
     container.className = "video-container";
-    container.id = "container-" + id;
+    container.id = `container-${id}`;
 
     const video = document.createElement("video");
     video.autoplay = true;
     video.playsInline = true;
     video.srcObject = stream;
 
+    video.addEventListener("loadedmetadata", () =>
+        video.play().catch(console.error)
+    );
+
     const label = document.createElement("div");
     label.className = "video-label";
     label.innerText = name;
@@ -255,14 +72,19 @@ function addRemoteVideo(id, stream, name) {
     container.append(video, label);
     videoGrid.appendChild(container);
     updateVideoGridLayout();
+
+    // separate audio element to bypass autoplay restrictions
+    const audio = new Audio();
+    audio.srcObject = stream;
+    audio.autoplay = true;
+    audio.play().catch(console.error);
 }
 
 /**
- * Removes a peer's video container from the grid on disconnect.
- * @param {string} id - PeerJS ID of the user to remove.
+ * Removes a peer’s video container.
  */
 function removeVideoContainer(id) {
-    const c = document.getElementById("container-" + id);
+    const c = document.getElementById(`container-${id}`);
     if (c) {
         c.remove();
         updateVideoGridLayout();
@@ -270,21 +92,213 @@ function removeVideoContainer(id) {
 }
 
 /**
- * Adjusts the CSS grid layout based on the number of video tiles:
- *  - 1 tile: full width
- *  - 2–4 tiles: 2 columns
- *  - 5+ tiles: columns = ceil(sqrt(count))
+ * Mute/unmute mic.
+ */
+function toggleMute() {
+    const t = window.localStream?.getAudioTracks()[0];
+    if (t) {
+        t.enabled = !t.enabled;
+        updateStatusIndicator();
+    }
+}
+
+/**
+ * Toggles camera on/off and notifies peers.
+ */
+function toggleCamera() {
+    const videoTrack = window.localStream?.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    // 1) Toggle our own camera
+    videoTrack.enabled = !videoTrack.enabled;
+    updateStatusIndicator();
+
+    // 2) Tell everyone else to toggle our tile
+    connection.invoke("ToggleCamera", roomName, peerIdAvailable)
+        .catch(console.error);
+}
+
+/**
+ * Tell server to toggle virtual background blur.
+ */
+function toggleVirtualBackground() {
+    connection.invoke("ToggleVirtualBackground", roomName, peerIdAvailable)
+        .catch(console.error);
+}
+
+/**
+ * Raise hand in UI & notify peers.
+ */
+function raiseHand() {
+    if (!connection || !peerIdAvailable) return;
+    connection.invoke("RaiseHand", roomName, peerIdAvailable)
+        .then(() => {
+            const tile = document.getElementById(`container-${peerIdAvailable}`);
+            if (tile) {
+                tile.classList.add("hand-raised");
+                setTimeout(() => tile.classList.remove("hand-raised"), 5000);
+            }
+        })
+        .catch(console.error);
+}
+
+/**
+ * Central toggle: calls start or stop under the hood.
+ */
+async function toggleScreenShare() {
+    if (!isScreenSharing) {
+        await startScreenShare();
+        isScreenSharing = true;
+        document.getElementById("screenShareBtnLabel").innerText = "Stop Sharing";
+    } else {
+        await stopScreenShare();
+        isScreenSharing = false;
+        document.getElementById("screenShareBtnLabel").innerText = "Share Screen";
+    }
+}
+
+/**
+ * Start screen share, swap tracks on each connection.
+ */
+async function startScreenShare() {
+    try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+        const micTrack = window.localStream.getAudioTracks()[0];
+        originalStream = window.localStream;
+
+        // auto‑toggle back if user uses browser UI to stop
+        screenTrack.onended = () => toggleScreenShare();
+
+        mediaConnections.forEach(conn => {
+            const sender = conn.peerConnection.getSenders()
+                .find(s => s.track?.kind === "video");
+            if (sender) sender.replaceTrack(screenTrack);
+        });
+
+        window.localStream = new MediaStream([screenTrack, micTrack]);
+        document.querySelector(`#container-${peerIdAvailable} video`)
+            .srcObject = window.localStream;
+
+        connection.invoke("StartScreenShare", roomName, peerIdAvailable)
+            .catch(console.error);
+
+    } catch (err) {
+        console.error("Screen share failed:", err);
+    }
+}
+
+/**
+ * Stop screen share and restore camera.
+ */
+async function stopScreenShare() {
+    try {
+        if (!originalStream) return;
+        const cameraTrack = originalStream.getVideoTracks()[0];
+        const micTrack = originalStream.getAudioTracks()[0];
+
+        mediaConnections.forEach(conn => {
+            const sender = conn.peerConnection.getSenders()
+                .find(s => s.track?.kind === "video");
+            if (sender) sender.replaceTrack(cameraTrack);
+        });
+
+        window.localStream = new MediaStream([cameraTrack, micTrack]);
+        document.querySelector(`#container-${peerIdAvailable} video`)
+            .srcObject = window.localStream;
+
+        connection.invoke("StopScreenShare", roomName, peerIdAvailable)
+            .catch(console.error);
+
+        originalStream = null;
+
+    } catch (err) {
+        console.error("Stop screen share failed:", err);
+    }
+}
+
+/**
+ * Record/unrecord and download.
+ */
+function toggleRecording() {
+    if (!window.localStream) return;
+    if (!isRecording) {
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(window.localStream);
+        mediaRecorder.ondataavailable = e => { if (e.data.size) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: "video/webm" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `recording-${Date.now()}.webm`;
+            document.body.append(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        };
+        mediaRecorder.start();
+        isRecording = true;
+        document.getElementById("recordBtnLabel").innerText = "Stop";
+    } else {
+        mediaRecorder.stop();
+        isRecording = false;
+        document.getElementById("recordBtnLabel").innerText = "Record";
+    }
+    connection.invoke("ToggleRecording", roomName, peerIdAvailable)
+        .catch(console.error);
+}
+
+/**
+ * Lay out the video grid.
  */
 function updateVideoGridLayout() {
     const count = videoGrid.childElementCount;
-    const cols = count <= 1
-        ? 1
-        : count <= 4
-            ? 2
-            : Math.ceil(Math.sqrt(count));
-
+    const cols = count <= 1 ? 1 : count <= 4 ? 2 : Math.ceil(Math.sqrt(count));
     videoGrid.style.display = "grid";
-    videoGrid.style.gridTemplateColumns = `repeat(${cols},1fr)`;
+    videoGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
     videoGrid.style.gridAutoRows = "1fr";
     videoGrid.style.gap = "10px";
 }
+
+/**
+ * Get camera+mic and show local preview.
+ */
+function initLocalStream(yourName) {
+    const constraints = {
+        audio: true,
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15, max: 30 } }
+    };
+    navigator.mediaDevices.getUserMedia(constraints)
+        .then(stream => {
+            window.localStream = stream;
+            addLocalVideo(yourName);
+            updateStatusIndicator();
+            const track = stream.getVideoTracks()[0];
+            track.applyConstraints({ frameRate: { ideal: 15 } }).catch(console.warn);
+        })
+        .catch(err => console.error("getUserMedia failed:", err));
+}
+
+/**
+ * Outgoing call helper.
+ */
+function callPeer(peerId, name) {
+    if (!window.localStream || !peerId) return;
+    const conn = peer.call(peerId, window.localStream, { metadata: { username } });
+    mediaConnections.push(conn);
+    conn.on("stream", s => addRemoteVideo(peerId, s, name));
+    conn.on("close", () => removeVideoContainer(peerId));
+    conn.on("error", e => console.error("Call error:", e));
+}
+
+// Incoming calls must also be tracked
+peer.on("call", conn => {
+    conn.answer(window.localStream);
+    mediaConnections.push(conn);
+    conn.on("stream", s => {
+        const caller = conn.metadata?.username || peerUsernameMap[conn.peer] || conn.peer.slice(0, 5);
+        addRemoteVideo(conn.peer, s, caller);
+    });
+    conn.on("close", () => removeVideoContainer(conn.peer));
+});

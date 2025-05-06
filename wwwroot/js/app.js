@@ -1,35 +1,24 @@
 ﻿// === js/app.js ===
-// Entry point for the collaboration app: handles room setup, SignalR & PeerJS connections, and UI initialization.
+// Consolidated SignalR + PeerJS initialization for collaboard.
 
-// 1) Read the room code from the URL query string, defaulting to "TestRoom" if none provided
+// ---- 1) Read room name from URL ----
 const urlParams = new URLSearchParams(window.location.search);
-const roomName = urlParams.get("room") || "TestRoom";
-
-// 2) Application state variables
-let username = "Guest";           // Current user's display name
-let localVideoAdded = false;      // Tracks if our own video tile is already in the UI
-let peerIdAvailable;              // This client's PeerJS ID once assigned
-let peer, connection;             // References for PeerJS and SignalR connections
-
-// 2.5) Map of PeerJS IDs to usernames for labeling video tiles and chat messages
-const peerUsernameMap = {};
-
-// 3) Display the active room name in the page header
+const roomName = urlParams.get("room") || "TestRoom";          // Room code :contentReference[oaicite:9]{index=9}
 document.getElementById("roomNameDisplay").innerText = roomName;
 
-// 4) Set up the username input modal and handlers
+// ---- 2) State variables ----
+let username = "Guest";               // User’s display name
+let connection, peer;                 // SignalR & PeerJS connections
+let peerIdAvailable = null;           // Our PeerJS ID once assigned
+const peerUsernameMap = {};           // Maps PeerJS IDs → usernames
+
+// ---- 3) Prompt for username & then init connections ----
 setupUsernameHandlers();
 
-/**
- * Configures the username prompt:
- *  - Submits on Enter key
- *  - Hides the modal and initializes connections on button click
- */
 function setupUsernameHandlers() {
     const input = document.getElementById("usernameInput");
     const btn = document.getElementById("usernameSubmit");
 
-    // Submit when user presses Enter in the input field
     input.addEventListener("keydown", e => {
         if (e.key === "Enter") {
             e.preventDefault();
@@ -37,27 +26,24 @@ function setupUsernameHandlers() {
         }
     });
 
-    // When the button is clicked, capture the username and start connections
     btn.addEventListener("click", () => {
         const val = input.value.trim();
-        if (val) username = val;                          // Update username if non-empty
-        document.getElementById("usernameModal").style.display = "none";  // Hide modal
-        initializeConnections();                          // Begin SignalR & PeerJS setup
+        if (val) username = val;
+        document.getElementById("usernameModal").style.display = "none";
+        initialize();  // Start all networking
     });
 }
 
-/**
- * Initializes the SignalR and PeerJS connections and wires up all real-time event handlers.
- */
-function initializeConnections() {
-    // Build the SignalR connection to our chatHub endpoint
+// ---- 4) Main init: build SignalR & PeerJS, wire handlers ----
+function initialize() {
+    // 4.1) Build the single SignalR connection :contentReference[oaicite:10]{index=10}
     connection = new signalR.HubConnectionBuilder()
-        .withUrl(`${window.location.origin}/chatHub`, { withCredentials: true })
-        .withAutomaticReconnect()
-        .configureLogging(signalR.LogLevel.Information)
+        .withUrl("https://collaboard-djb7e8caezeqbnef.centralus-01.azurewebsites.net/chatHub", {
+            withCredentials: true
+        })
+        .withAutomaticReconnect()                                              // reconnect logic :contentReference[oaicite:11]{index=11}
+        .configureLogging(signalR.LogLevel.Information)                         // debug logging :contentReference[oaicite:12]{index=12}
         .build();
-
-    // ----- SIGNALR EVENT HANDLERS -----
 
     // 5a) When joining, receive list of existing peers: store their names and call each
     connection.on("ExistingPeers", peers =>
@@ -114,55 +100,53 @@ function initializeConnections() {
         setTimeout(() => tile.classList.remove("hand-raised"), 5000);
     });
 
-    // ----- START CONNECTIONS -----
-
-    // Start the SignalR connection first
+    // 4.3) Start SignalR, then set up PeerJS
     connection.start()
         .then(() => {
             console.log("Connected to SignalR hub.");
 
-            // Create a new PeerJS instance (auto-generates our PeerID)
+            // 4.4) Create PeerJS once hub is live :contentReference[oaicite:17]{index=17}
             peer = new Peer();
-
-            // 7) When PeerJS assigns us an ID, join the room and get media
             peer.on("open", id => {
                 peerIdAvailable = id;
+                peerUsernameMap[id] = username;
 
-                // Tell server we're in the room, then request webcam/mic access
+                // Tell server we've joined, then get our media :contentReference[oaicite:18]{index=18}
                 connection.invoke("JoinRoom", roomName, id, username)
                     .then(() => navigator.mediaDevices.getUserMedia({ video: true, audio: true }))
                     .then(stream => {
-                        // Store our local stream globally for other modules to use
                         window.localStream = stream;
-                        peerUsernameMap[id] = username;    // Map our own ID to our username
-
-                        // Add our video tile and update UI indicators
                         addLocalVideo(username);
                         updateStatusIndicator();
                     })
-                    .catch(err => console.error("Error during JoinRoom or getUserMedia:", err));
+                    .catch(err => console.error("JoinRoom/getUserMedia error:", err));
             });
 
-            // 9) Handle incoming calls from other peers
+            // 4.5) Handle incoming PeerJS calls
             peer.on("call", call => {
-                // Answer with our local media stream
-                call.answer(window.localStream);
+                call.answer(window.localStream);  // answer with our media :contentReference[oaicite:19]{index=19}
 
-                // When we receive their stream, label and display it
                 call.on("stream", remoteStream => {
-                    // Determine caller's name from metadata or fallback to map or short ID
+                    // Use metadata if set, otherwise lookup from map :contentReference[oaicite:20]{index=20}
                     const callerName = call.metadata?.username
                         || peerUsernameMap[call.peer]
-                        || ("User " + call.peer.slice(0, 5));
-
+                        || call.peer.slice(0, 5);
                     peerUsernameMap[call.peer] = callerName;
                     addRemoteVideo(call.peer, remoteStream, callerName);
                 });
 
-                // Clean up on error or call close
-                call.on("error", e => console.error("Incoming call error:", e));
+                call.on("error", e => console.error("Call error:", e));
                 call.on("close", () => removeVideoContainer(call.peer));
             });
         })
         .catch(err => console.error("SignalR start error:", err));
+}
+
+// ---- 5) Helper to initiate outgoing PeerJS calls ----
+function callPeer(peerId, name) {
+    if (!window.localStream || !peerId) return;
+    const outgoing = peer.call(peerId, window.localStream, { metadata: { username } });  // include our name :contentReference[oaicite:21]{index=21}
+    outgoing.on("stream", stream => addRemoteVideo(peerId, stream, name));
+    outgoing.on("error", err => console.error("Outgoing call error:", err));
+    outgoing.on("close", () => removeVideoContainer(peerId));
 }
