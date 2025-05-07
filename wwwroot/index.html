@@ -104,8 +104,9 @@
         <button onclick="toggleCamera()">
             <i class="fas fa-video"></i> Camera On/Off
         </button>
-        <button onclick="startScreenShare()">
-            <i class="fas fa-desktop"></i> Share Screen
+        <button onclick="toggleScreenShare()">
+            <i class="fas fa-desktop"></i>
+            <span id="screenShareBtnLabel">Share Screen</span>
         </button>
         <button onclick="toggleVirtualBackground()">
             <i class="fas fa-image"></i> Virtual BG
@@ -122,7 +123,6 @@
     <!-- Load modular JavaScript files at end of body for performance -->
     <script src="js/app.js"></script>
     <script src="js/peer-connection.js"></script>
-    <script src="js/signalr-connection.js"></script>
     <script src="js/video-controls.js"></script>
     <script src="js/ui-controls.js"></script>
     <script src="js/whiteboard.js"></script>
